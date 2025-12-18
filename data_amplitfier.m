@@ -1,0 +1,46 @@
+clear all;
+clc;
+
+% add dataset
+dataset_dir = './dataset/TIMIT_onesentence/Participant17/Cantonese_sentence/Whisper'; % this is a very small dataset %dataset segregated & data not segregated
+listing = dir(dataset_dir); %
+% get info of dataset
+listing = listing(~ismember({listing.name}, {'.', '..'}));
+len_listing = length(listing);
+
+%initialize the first audio dataset
+for j = 1: len_listing
+    dB_gain = db2mag(20);
+    [data_sound_1, Fs] = audioread([dataset_dir '/' listing(j).name]);
+
+    begin_freq = 100/ (Fs/2);
+    end_freq = 7000 / (Fs/2);
+    [b, a] = butter(4, [begin_freq, end_freq], 'bandpass');
+    data_sound_1 = filter(b, a, data_sound_1);
+
+    data_sound_1 = data_sound_1 * dB_gain;
+
+    audiowrite(sprintf('./dataset/TIMIT_onesentence/Participant17/Cantonese_sentence/Whisper_mod/sentence_%d.wav', j), data_sound_1, Fs, 'BitsPerSample', 16);
+end
+
+%% 
+
+dB_gain = db2mag(13);
+
+[data_sound_1, Fs] = audioread([dataset_dir '/' listing(1).name]);
+r_1 = rms(data_sound_1, 1);
+
+[data_sound_2, Fs_2] = audioread([dataset_dir '/' listing(2).name]);
+r_2 = rms(data_sound_2);
+
+data_sound_1 = data_sound_1 * dB_gain;
+
+begin_freq = 100/ (Fs/2);
+end_freq = 7000 / (Fs/2);
+[b, a] = butter(4, [begin_freq, end_freq], 'bandpass');
+data_sound_1 = filter(b, a, data_sound_1);
+
+figure
+plot(data_sound_1)
+
+audiowrite('output_truncated.wav', data_sound_1, Fs, 'BitsPerSample', 16);

@@ -1,0 +1,153 @@
+% reconstruction
+clear all
+clc
+% parameter for audio sample
+fs=16000; % sampling rate
+stft_sampl_len=6;
+FFT_len=800;
+Overlap_rate=0.9;
+% load GASSOM model
+model="./modelset/TIMIT_onesentence/Single_Result/GASSOM_it=10k";
+load(model)
+
+directory = './dataset/TIMIT_onesentence/test/MALE_SX290';
+file_pattern = fullfile(directory, '*.WAV');
+m_audio_files = dir(file_pattern);
+
+% for x = 1: length(m_audio_files)
+%     for y = x: length(m_audio_files)
+%         fprintf('File: %s, File: %s\n',m_audio_files(x).name, m_audio_files(y).name);
+%     end
+%     disp(m_audio_files(x).name);
+% end
+
+for x = 1 : 3
+    if x + 1 <= 3
+        for y = x+1 : 3
+            fprintf('File: %s, File: %s\n',m_audio_files(x).name, m_audio_files(y).name);
+            % load test audio
+            data1=audioread(fullfile(directory, m_audio_files(x).name));
+            %data1 = data1(13900:33600);
+            data1=data1./max(abs(data1));
+            %data1 = data1*10;
+            len_data1=length(data1);
+            
+            data2=audioread(fullfile(directory, m_audio_files(y).name));
+            %data2 = data2(13900:33600);
+            data2=data2./max(abs(data2));
+            len_data2=length(data2);
+            %data2 = data2*10;
+            
+            if len_data1<len_data2
+                data1=[data1; 1e-3*rand(len_data2-len_data1,1)];
+            else
+                data2=[data2; 1e-3*rand(len_data1-len_data2,1)];
+            end
+            mix_data=data1+data2;
+            mix_data=mix_data./max(abs(mix_data));
+            %mix_data = mix_data*10;
+            % stft
+            DATA1=stft(data1,'Window',hann(FFT_len,'periodic'),...
+            'FFTLength',FFT_len,'OverlapLength',round(FFT_len*Overlap_rate));
+            DATA2=stft(data2,'Window',hann(FFT_len,'periodic'),...
+            'FFTLength',FFT_len,'OverlapLength',round(FFT_len*Overlap_rate));
+            MIX_DATA=stft(mix_data,'Window',hann(FFT_len,'periodic'),...
+            'FFTLength',FFT_len,'OverlapLength',round(FFT_len*Overlap_rate));
+            len_data=size(MIX_DATA,2);
+            max_numsampl=floor(len_data/stft_sampl_len);
+            %
+            Mix_collection=[]; % for mixed acoustic spectrogram (c) and (d)
+            mix_collection=[];
+            
+            Recon_allnode_collection=[]; % for reconstruction by all nodes
+            
+            SP1_collection=[]; % for acoustic spectrogram of SP1 (a)
+            SP1_est_collection=[]; % for reconstructed spectrogram of single SP1 (e)
+            Attend_SP1_collection=[]; %  (g) for reconstructed spectrogram of Mix: attedn SP1 (g)
+            SP1_node_track=[]; % record the most popular node for SP1 before mixing
+            
+            SP2_collection=[]; % for acoustic spectrogram of SP2 (b)
+            SP2_est_collection=[]; % for reconstructed spectrogram of single SP2 (f)
+            Attend_SP2_collection=[]; % for reconstructed spectrogram of Mix: attedn SP2 (h)
+            SP2_node_track=[]; % record the most popular node for SP2 before mixing
+            
+            %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+            %%%%%%%%%%%%%%%%%%                                    %%%%%%%%%%%%%%%%%%%%%
+            %%%%%%%%%%%%%%%%%% Mix attend Reconstruction of SP1/2 %%%%%%%%%%%%%%%%%%%%%
+            %%%%%%%%%%%%%%%%%%                                    %%%%%%%%%%%%%%%%%%%%%
+            %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+            
+            k=1; % index inside data
+            for i=1:max_numsampl
+                Mix=MIX_DATA(:,k:k+stft_sampl_len-1);
+                k=k+stft_sampl_len;
+                Mix=Mix(:);
+                % normalize representation
+                norm_coeff=norm(abs(Mix));
+                Mix=Mix/norm_coeff;
+                % 
+                [winners] = assomEncode(obj,abs(Mix)); % calculate Projection by assomEncode method
+                disp(winners)
+                % Specify node for SP1 and SP2
+                % SP1_node=SP1_node_track(i); % oracle
+                % SP2_node=SP2_node_track(i); % oracle
+            
+            %     tmp=obj.Proj(1:5);
+            %     SP1_node=find(obj.Proj==max(tmp));
+            %     tmp=obj.Proj(11:15);
+            %     SP2_node=find(obj.Proj==max(tmp));
+            
+            %    
+                if mean(obj.Proj(1:56))>mean(obj.Proj(57:100)) % Clustering
+                    tmp=obj.Proj(1:56);
+                    SP1_node=find(obj.Proj==max(tmp));
+                    tmp=rmoutliers(obj.Proj(57:100),'percentiles',[0 90]); % remove outlier
+                    SP2_node=find(obj.Proj==max(tmp));
+                else
+                    tmp=rmoutliers(obj.Proj(1:56),'percentiles',[0 60]); % remove outlier
+                    SP1_node=find(obj.Proj==max(tmp));
+                    tmp=obj.Proj(57:100);
+                    SP2_node=find(obj.Proj==max(tmp));
+                end
+             %
+                SP1_node_track_est(i)=SP1_node;
+                SP2_node_track_est(i)=SP2_node;
+                % reconstructed by the specified node
+                Attend_SP1=obj.bases{1}(:,SP1_node) * obj.coef{1}(SP1_node);
+                %+obj.bases{2}(:,SP1_node)* obj.coef{2}(SP1_node); % L X 1
+                
+                Attend_SP2=obj.bases{1}(:,SP2_node) * obj.coef{1}(SP2_node);
+                %+obj.bases{2}(:,SP2_node)* obj.coef{2}(SP2_node); % L X 1
+                
+                % reconstructed by all node
+                Recon_allnode=obj.bases{1}(:,1) * obj.coef{1}(1);
+                %+obj.bases{2}(:,1)* obj.coef{2}(1);
+                for ind_node=2:100
+                    Recon_allnode=Recon_allnode+obj.bases{1}(:,ind_node) * obj.coef{1}(ind_node);
+                    %+obj.bases{2}(:,ind_node)* obj.coef{2}(ind_node);
+                end
+                Recon_allnode=Recon_allnode/100;
+                % 
+                Mix=Mix*norm_coeff;
+                Attend_SP1=Attend_SP1*norm_coeff;
+                Attend_SP2=Attend_SP2*norm_coeff;
+                Recon_allnode=Recon_allnode*norm_coeff;
+                % reshape
+                Mix=reshape(Mix,FFT_len,[]);
+                Attend_SP1=reshape(Attend_SP1,FFT_len,[]);
+                Attend_SP2=reshape(Attend_SP2,FFT_len,[]);
+                Recon_allnode=reshape(Recon_allnode,FFT_len,[]);
+                % add phase
+                Attend_SP1=Attend_SP1.*exp(1j*imag(log(Mix)));
+                Attend_SP2=Attend_SP2.*exp(1j*imag(log(Mix)));
+                %
+                Mix_collection=[Mix_collection Mix];
+                Attend_SP1_collection=[Attend_SP1_collection Attend_SP1];
+                Attend_SP2_collection=[Attend_SP2_collection Attend_SP2];
+                Recon_allnode_collection=[Recon_allnode_collection Recon_allnode];
+            end
+            
+            disp(SP1_node_track_est)
+        end
+    end
+end

@@ -1,0 +1,180 @@
+clear all
+clc
+
+% Parameters for audio segments
+fs = 16000; % Sampling rate
+segment_length = round(0.075 * fs); % 3/40 * 16000Hz = 1200
+jump_length = round(0.075 / 5 * fs); % 3/(40 * 5) * 16000Hz = 240 
+
+% Parameters for training sample
+FFTL = 800; % STFT window length
+OverlapRate = 0.9; % Overlap rate
+feature_type = 'abs_stft';
+
+% Add dataset
+dataset_dir = './dataset/TIMIT_onesentence/SA1_one';
+listing = dir(dataset_dir);
+listing = listing(~ismember({listing.name}, {'.', '..'}));
+len_listing = length(listing);
+
+j = 1; % Index of data
+k = 15; % Index inside data
+
+% Initialize the first audio dataset
+data = audioread(fullfile(dataset_dir, listing(j).name));
+len_data = length(data);
+figure;
+plot(data);
+title('Original Signal');
+xlabel('Sample Index');
+ylabel('Amplitude');
+sound(data, fs);
+
+iter_state = 10;
+train_samples_frame = [];
+
+for i = 1:iter_state
+    if k + segment_length - 1 > len_data % Zero-padding
+        segment = zeros(segment_length, 1);
+        segment(1:len_data + 1 - k) = data(k:len_data);
+    else
+        segment = data(k:k + segment_length - 1);
+        k = k + jump_length;
+    end
+
+    switch feature_type
+        case 'abs_fft'
+            train_sample = abs(fft(segment));
+            train_sample = train_sample(1:FFTL / 2); % Adjust here for FFT length
+        case 'abs_stft'
+            figure;
+            plot(segment);
+            title('Segment Signal');
+            train_sample = abs(stft(segment, fs, 'Window', hann(FFTL, 'periodic'),'FFTLength', FFTL, 'OverlapLength', round(FFTL * OverlapRate)));
+            train_sample = train_sample(:);
+        case 'waveform'
+            train_sample = segment;
+    end
+    
+    % Normalize train_sample
+    train_sample = train_sample / norm(train_sample);
+    train_samples_frame = [train_samples_frame train_sample];
+end
+
+for i = 1:size(train_samples_frame, 2)
+    % figure;
+    complex_basis = reshape(train_samples_frame(:, i), [FFTL 6]);
+    basis = reshape(abs(train_samples_frame(:, i)), [FFTL, 6]);
+    imagesc(basis(1:400, :));
+    title(sprintf('Basis Frame %d', i));
+end
+
+%% 
+% T-SNE
+Y = tsne(train_samples_frame', "NumDimensions", 2);
+
+[idx_sub_2, centroids_sub_2] = kmeans(Y, 2);
+
+%% 
+
+% Linear phase construction
+num_frames = 6;
+linear_phase = zeros(FFTL, num_frames);
+
+for k = 1:FFTL
+    linear_phase(k, 1) = - 2 * pi * (k-1)/FFTL; 
+end
+
+hop_value = round((1-OverlapRate) * FFTL); % Points that are hop each frame
+hop_section = zeros( hop_value * num_frames, 1); %Total points hop in total
+
+for k = 1: length(hop_section)
+    hop_section(k) = -2 * pi * (k-1) / FFTL;
+end
+
+hop_section = reshape(hop_section, [hop_value, num_frames]);
+
+%% 
+
+% Overlap points are same phase between frames
+for i = 2 : num_frames
+    linear_phase( 1 : FFTL - hop_value , i) = linear_phase (hop_value + 1 : FFTL , i-1);
+    linear_phase(FFTL - hop_value + 1 : FFTL, i) = hop_section(: , i-1);
+end
+
+%% 
+
+exp_value = exp(1j * linear_phase);
+
+% Fetching STFT signal
+for k = 1: 10
+    
+    magnitude = train_samples_frame(: , k); 
+    magnitude = reshape(magnitude, [FFTL, 6]); % Reshape to [n_freq, n_frames]
+    
+    mag_phase = zeros(FFTL, 6);
+    for i = 1:6
+        mag_phase(:, i) = magnitude(: , i) .* exp_value(: , i); % Adding artificial linear phase
+    end
+    
+    % iSTFT
+    time_signal = istft(mag_phase, fs, 'Window', hann(FFTL, 'periodic'), 'FFTLength', FFTL, 'OverlapLength', round(FFTL * OverlapRate));
+    
+    
+    truncated_time_signal = zeros(1000, 1); % Truncate first 100 and later 100
+    
+    truncated_time_signal = time_signal(100:1100, 1);
+    truncated_time_signal = truncated_time_signal / norm(truncated_time_signal); % Normalize time signal
+    
+    time_vector = (0:length(truncated_time_signal)-1); 
+    
+    figure;
+    plot(time_vector, real(truncated_time_signal)); 
+    title('Reconstructed Signal', k);
+    xlabel('Time (points)');
+    ylabel('Amplitude');
+    grid on;
+    xlim([0 time_vector(end)]); 
+end
+
+%% 
+
+for i = 1:min(10, size(train_samples_frame, 2)) % Ensure we don't exceed available frames
+    magnitude = train_samples_frame(:, i); % Get magnitude
+    magnitude = reshape(magnitude, [FFTL, 6]); % Reshape if necessary
+    
+    % Initialize random phase
+    grinn_lim_phase = exp(1i * -2 * pi * rand(FFTL, 6));
+    
+    % Iterative Griffin-Lim algorithm
+    for iter = 1:9
+        % Inverse STFT
+        time_signal = istft(magnitude .* grinn_lim_phase, fs, 'Window', hann(FFTL, 'periodic'), 'FFTLength', FFTL, 'OverlapLength', round(FFTL * OverlapRate));
+
+        if iter < 10
+            time_signal(1 : 10, 1) = 0;
+            time_signal(1190 : 1200, 1) = 0;
+        end
+        
+        % Get the new STFT
+        freq_signal = stft(time_signal, fs, 'Window', hann(FFTL, 'periodic'), 'FFTLength', FFTL, 'OverlapLength', round(FFTL * OverlapRate));
+        
+        % Update phase
+        grinn_lim_phase = exp(1i * angle(freq_signal));
+    end 
+
+    % Final reconstruction
+    complex_basis = magnitude .* grinn_lim_phase;
+    time_signal_recon = istft(complex_basis, fs, 'Window', hann(FFTL, 'periodic'), 'FFTLength', FFTL, 'OverlapLength', round(FFTL * OverlapRate));
+
+    % Proper time history plotting
+    time_vector = (0:length(time_signal_recon)-1) / fs; % Create time vector in seconds
+    
+    figure;
+    plot(time_vector, real(time_signal_recon)); % Plot with explicit time axis
+    title(sprintf('Reconstructed Signal - Frame %d', i));
+    xlabel('Time (s)');
+    ylabel('Amplitude');
+    grid on;
+    xlim([0 time_vector(end)]); % Ensure full time range is shown
+end
