@@ -74,12 +74,13 @@ classdef GASSOM_Online  < handle
             
             %initialize
             %random initial bases
+            rng(5);
             A =randn(obj.length_basis, obj.size_subspace, obj.n_subspace); %generate an array of random numbers from a standard normal distribution
             A = orthonormalize_subspace (A);
             obj.bases{1}= squeeze(A(:,1,:)); 
             %obj.bases{2}= squeeze(A(:,2,:));
 
-            obj.transProb =  genTransProbG(obj.topo_subspace,obj.sigmaTrans, obj.alphaTrans,0);            
+            obj.transProb =  genTransProbG(obj.topo_subspace,obj.sigmaTrans, obj.alphaTrans,0);    
             np = rand(obj.n_subspace,1);          
             obj.nodeProb = bsxfun(@rdivide,np,sum(np));
             obj.iter=1;
