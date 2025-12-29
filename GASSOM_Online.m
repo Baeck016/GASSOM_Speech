@@ -62,7 +62,8 @@ classdef GASSOM_Online  < handle
             obj.n_basis = obj.size_subspace * obj.n_subspace;
             obj.alpha_A = 0.08; %  
             obj.alpha_C = 1e-4; % decays exponentially (learning rate)
-            obj.tconst = 8000*10;  
+            % obj.tconst = 8000*10;  
+            obj.tconst = 20000;
             obj.sigma_A = 2;
             obj.tconst_n = 8000;
             obj.sigma_C = 0.5; % decays exponentially (standard deviation of neighborhood function)
@@ -74,7 +75,7 @@ classdef GASSOM_Online  < handle
             
             %initialize
             %random initial bases
-            rng(5);
+            % rng(5);
             A =randn(obj.length_basis, obj.size_subspace, obj.n_subspace); %generate an array of random numbers from a standard normal distribution
             A = orthonormalize_subspace (A);
             obj.bases{1}= squeeze(A(:,1,:)); 
@@ -126,10 +127,8 @@ classdef GASSOM_Online  < handle
         
         
         function updateBasis(this,X)          
-            
             alpha = (this.alpha_A*exp(-this.iter/this.tconst)+this.alpha_C);
             sigma_h = (this.sigma_A*exp(-this.iter/this.tconst)+this.sigma_C);
-           
            
             [~, batch_size] = size(X);
             [cj,ci] = ind2sub(this.topo_subspace,this.winners);   
@@ -210,7 +209,6 @@ classdef GASSOM_Online  < handle
             X_est=this.bases{1}*coef1;
             %this.bases{2}*coef2; % L X K
         end
-        
     end
     
 end
