@@ -2,25 +2,38 @@ clear all;
 clc;
 
 % add dataset
-dataset_dir = './dataset/TIMIT_onesentence/Participant17/Cantonese_sentence/Whisper'; % this is a very small dataset %dataset segregated & data not segregated
+dataset_dir = './dataset/Data_collected/Participant14/Cantonese_sentence/Normal'; % this is a very small dataset %dataset segregated & data not segregated
 listing = dir(dataset_dir); %
 % get info of dataset
 listing = listing(~ismember({listing.name}, {'.', '..'}));
 len_listing = length(listing);
 
+save_folder = "./dataset/Data_collected/Participant14/Cantonese_sentence/Normal_mod";
+
+if ~exist(save_folder)
+    mkdir(save_folder)
+end
+
 %initialize the first audio dataset
-for j = 1: len_listing
+targetFs = 16000;   % desired sample rate
+
+for j = 1:len_listing
     dB_gain = db2mag(20);
     [data_sound_1, Fs] = audioread([dataset_dir '/' listing(j).name]);
 
-    begin_freq = 100/ (Fs/2);
+    % bandpass filter
+    begin_freq = 100 / (Fs/2);
     end_freq = 7000 / (Fs/2);
     [b, a] = butter(4, [begin_freq, end_freq], 'bandpass');
     data_sound_1 = filter(b, a, data_sound_1);
-
     data_sound_1 = data_sound_1 * dB_gain;
 
-    audiowrite(sprintf('./dataset/TIMIT_onesentence/Participant17/Cantonese_sentence/Whisper_mod/sentence_%d.wav', j), data_sound_1, Fs, 'BitsPerSample', 16);
+    % resample to 16 kHz
+    data_sound_1 = resample(data_sound_1, targetFs, Fs);
+
+    % write at 16 kHz
+    audiowrite(sprintf('%s/sentence_%d.wav', save_folder, j), ...
+               data_sound_1, targetFs, 'BitsPerSample', 16);
 end
 
 %% 
@@ -40,7 +53,11 @@ end_freq = 7000 / (Fs/2);
 [b, a] = butter(4, [begin_freq, end_freq], 'bandpass');
 data_sound_1 = filter(b, a, data_sound_1);
 
-figure
-plot(data_sound_1)
+% figure
+% plot(data_sound_1)
 
 audiowrite('output_truncated.wav', data_sound_1, Fs, 'BitsPerSample', 16);
+%% 
+
+files = dir("./dataset/Data_collected/Participant14/Cantonese_sentence/Normal_mod/*.wav");
+[data_sound, Fs] = audioread(fullfile(files(1).folder, files(1).name));
