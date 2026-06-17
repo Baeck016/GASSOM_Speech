@@ -1,46 +1,52 @@
 clear all; clc;
 
 % load GASSOM model
-% load("./modelset/TIMIT_onesentence/test_shuffle_tc_seed5/shuffle_tc20000/GASSOM_it=41.971k.mat");
-% load("./modelset/TIMIT_onesentence/test_shuffle_tc_seed5/shuffle_tc80000/GASSOM_it=41.971k.mat");
-load("./modelset/TIMIT_onesentence/test_fade_seed5/GASSOM_it=41.971k.mat");
+load("./modelset/TIMIT_onesentence/test_shuffle_tc_seed5/shuffle_tc20000/GASSOM_it=41.971k.mat");
 
-sample = audioread("dataset/TIMIT_onesentence/train_SA1/SA1_FAEM0.WAV");
-% sample = audioread("dataset/TIMIT_onesentence/test_SA1/SA1_MMVP0.WAV");
+% sample = audioread("dataset/TIMIT_onesentence/test_SA1/SA1_FAEM0.WAV");
+sample = audioread("dataset/TIMIT_onesentence/test/CombinedFiles/FAKS0_SI1573.WAV.wav");
 
-save_folder = "modelset/TIMIT_onesentence/test_fade_seed5/SA1_FAEM0";
+save_folder = "modelset/TIMIT_onesentence/test_shuffle_tc_seed5/shuffle_tc20000/FAKS0_SI1573";
 
 if ~exist(save_folder)
     mkdir(save_folder)
 end
 
 %%
-% add fade in and fade out if needed
-sample = fade(sample);
+% plot_bases(obj);
 
-[encode_winners_record, proj_winners_record, padded_audio_sample, train_sample_record] = test_sample(obj, sample);
+%%
+% add fade in and fade out if needed
+% sample = fade(sample);
+
+[encode_winners_record, proj_winners_record, padded_audio_sample, test_sample_record] = test_sample(obj, sample, true, save_folder);
 encode_winner_count = count_winner(obj, encode_winners_record);
 proj_winner_count = count_winner(obj, proj_winners_record);
 [~, encode_winner_3_mode] = maxk(encode_winner_count, 3);
 [~, proj_winner_3_mode] = maxk(proj_winner_count, 3);
 
 %%
-plot_bases(obj);
-
-%%
 plot_winner_heatmap(obj, encode_winner_count, "reconstruction", save_folder);
-plot_winner_heatmap(obj, proj_winner_count, "projection", save_folder);
+% plot_winner_heatmap(obj, proj_winner_count, "projection", save_folder);
 plot_mode_winner(obj, encode_winner_3_mode, "reconstruction", save_folder);
-plot_mode_winner(obj, proj_winner_3_mode, "projection", save_folder);
+% plot_mode_winner(obj, proj_winner_3_mode, "projection", save_folder);
 
 %%
 plot_winner_track( ...
-    padded_audio_sample, ...
+    padded_audio_sample, ...    
     encode_winners_record, encode_winner_3_mode, ...
     proj_winners_record, proj_winner_3_mode, ...
-    train_sample_record, ...
+    test_sample_record, ...
     save_folder ...
 );
+
+%%
+save(sprintf(save_folder + "/variables.mat"), ...
+    "encode_winners_record", "padded_audio_sample", "test_sample_record", ...
+    "encode_winner_count", "encode_winner_3_mode" ...
+);
+
+beep;
 
 %%
 function y = fade (y)
@@ -52,7 +58,20 @@ function y = fade (y)
     y(end - length(decay_factor) + 1:end) = y(end - length(decay_factor) + 1:end) .* decay_factor;
 end
 
-function [encode_winners_record, proj_winners_record, padded_audio_sample, train_sample_record] = test_sample (obj, sample)
+function [encode_winners_record, proj_winners_record, padded_audio_sample, test_sample_record] = test_sample (...
+    obj, sample, do_track_procces, save_folder ...
+)
+    if nargin < 3
+        do_track_procces = false;
+    end
+
+    if do_track_procces
+        frame_record_folder = sprintf("%s/frame_records", save_folder);
+        if ~exist(frame_record_folder)
+            mkdir(frame_record_folder)
+        end
+    end
+
     % parameter for audio segments
     fs=16000; % sampling rate
     segment_length=0.075*fs;
@@ -62,10 +81,18 @@ function [encode_winners_record, proj_winners_record, padded_audio_sample, train
     FFTL=800; % STFT window length
     OverlapRate=0.9; % overlap rate
 
-    train_sample_record = [];
+    test_sample_record = [];
     len_data=length(sample);
     k = 1;
     i = 1;
+
+    tbp = textprogressbar(len_data, "showremtime", true);
+
+    % pre-allocated memory to store record
+    mae_record = zeros(500,100);
+    nodeprobTmp_record = zeros(500,100);
+    proj_record = zeros(500,100);
+    nodeprobTmp_rank_record = zeros(500,100);
 
     while true
         if k+segment_length-1>len_data % zero-padding
@@ -80,21 +107,74 @@ function [encode_winners_record, proj_winners_record, padded_audio_sample, train
             segment=sample(k:k+segment_length-1);
         end
 
-        train_sample=abs(stft(segment,fs,Window=hann(FFTL,'periodic'),...
+        test_sample_stft=abs(stft(segment,fs,Window=hann(FFTL,'periodic'),...
         FFTLength=FFTL,OverlapLength=round(FFTL*OverlapRate)));
-        train_sample=train_sample(:);
-        train_sample_record = [train_sample_record train_sample];
+
+        test_sample=test_sample_stft(:);
+        test_sample_record = [test_sample_record test_sample];
 
         % normalize train_sample
-        train_sample=train_sample/norm(train_sample);
+        test_sample=test_sample/norm(test_sample);
+
+        mae = mean(abs(test_sample - abs(obj.bases{1})));
+        [~, mae_winner] = min(mae);
+        mae_record(i,:) = mae;
 
         % record encode winner
-        [encode_winners] = assomEncode(obj,train_sample);
+        [encode_winners] = assomEncode(obj,test_sample);
         encode_winners_record(i) = encode_winners;
+        nodeprobTmp_record(i,:) = obj.nodeprobTmp;
+        nodeprobTmp_rank_record(i,:) = 101 - tiedrank(obj.nodeprobTmp);
 
+        assert(nodeprobTmp_rank_record(i,encode_winners) == 1);
+        
         % record projection winner
         [~, proj_winner] = max(obj.Proj);
         proj_winners_record(i) = proj_winner;
+        proj_record(i,:) = obj.Proj;
+
+        if do_track_procces
+            F = 16000/800 * (0:400);
+
+            % -- frame record
+            % fig = figure;
+            fig = figure("visible", "off");
+            theme(fig, "light");
+            tiledlayout(2,2,"TileSpacing","compact","Padding","compact");
+            % -- frame
+            nexttile;
+            imagesc(1:6, F, 10 * log10(test_sample_stft(800/2:800,:)));
+            % imagesc(1:6, F, test_sample_stft(800/2:800,:));
+            title(sprintf("frame %d (0Hz-8000Hz)", i));
+            set(gca, 'YDir', 'normal');
+            nexttile;
+            imagesc(1:6, F, 10 * log10(test_sample_stft(800/2:800,:)));
+            % imagesc(1:6, F, test_sample_stft(800/2:800,:));
+            title(sprintf("frame %d (0Hz-1500Hz)", i));
+            set(gca, 'YDir', 'normal');
+            ylim([0 1500]);
+            % -- nodeprobTmp
+            nexttile;
+            plot_heatmap(reshape(obj.nodeprobTmp, 10, 10)');
+            title(sprintf("reconstruction values (winner %d)", encode_winners));
+            % -- projection
+            nexttile;
+            plot_heatmap(reshape(obj.Proj, 10, 10)');
+            title(sprintf("projection values (winner %d)", proj_winner));
+            % -- save
+            set(gcf, 'WindowState', 'maximized');
+            saveas(gcf, sprintf("%s/frame%d_rec%d_proj%d.png", frame_record_folder, i, encode_winners, proj_winner));
+            close;
+
+            % mae
+            fig = figure("visible", "off");
+            theme(fig, "light");
+            plot_heatmap(reshape(mae,10,10)');
+            title(sprintf("frame%d MAEs (winner %d)", i, mae_winner));
+            set(gcf, 'WindowState', 'maximized');
+            saveas(gcf, sprintf("%s/frame%d_mae%d.png", frame_record_folder, i, mae_winner));
+            close;
+        end
 
         if k+segment_length-1>len_data
             break;
@@ -102,6 +182,42 @@ function [encode_winners_record, proj_winners_record, padded_audio_sample, train
             k=k+jump_length;
             i = i + 1;
         end
+
+        tbp(k);
+    end
+
+    % plot means and stds
+    nodeprobTmp_record = nodeprobTmp_record(1:i,:);
+    nodeprobTmp_rank_record = nodeprobTmp_rank_record(1:i,:);
+    proj_record = proj_record(1:i,:);
+    mae_record = mae_record(1:i,:);
+
+    plot_mean_std(nodeprobTmp_record, "reconstruction");
+    plot_mean_std(nodeprobTmp_rank_record, "reconstruction rank");
+    plot_mean_std(proj_record, "projection");
+    plot_mean_std(mae_record, "mae");
+
+    function plot_heatmap (data)
+        h = heatmap(data);
+        h.ColorbarVisible = "off";
+        h.XDisplayLabels = 1:10;
+        h.YDisplayLabels = 0:10:90;
+    end
+
+    function plot_mean_std (data, name)
+        fig = figure("visible", "off");
+        theme(fig, "light");
+        tiledlayout(1,2,"TileSpacing","compact","Padding","compact");
+        nexttile;
+        plot_heatmap(reshape(mean(data), 10, 10)');
+        title("mean");
+        nexttile;
+        plot_heatmap(reshape(std(data), 10, 10)');
+        title("std");
+        sgtitle(sprintf("%s value", name));
+        set(gcf, 'WindowState', 'maximized');
+        saveas(gcf, sprintf("%s/%s_mean_std.png", save_folder, name));
+        close;
     end
 end
 
@@ -121,10 +237,11 @@ function plot_bases (obj)
         assert(all(basis >= 0) || all(basis <= 0));
 
         basis = reshape(basis, [800, 6]);
-        basis = 10*log10(abs(basis(800/2:800, :)));
+        % basis = 10*log10(abs(basis(800/2:800, :)));
+        basis = abs(basis(800/2:800, :));
         imagesc(1:6, F, basis);
         set(gca, 'YDir', 'normal');
-        ylim([0 440]);
+        ylim([0 1500]);
     end
     figure;
     for p=1:obj.n_subspace
@@ -137,7 +254,7 @@ function plot_bases (obj)
         amp = normalize(amp, "range");
 
         plot(F, amp);
-        xlim([0 440]);
+        xlim([0 1500]);
         ylim([0 1]);
         hold on;
         line([120 120], ylim);
@@ -171,15 +288,17 @@ function plot_mode_winner (obj, modes, winner_metric, save_folder)
         amp = mean(abs(basis(400:end,:)), 2);
 
         subplot(k, 2 , 2 * i - 1);
+        % basis = basis(800/2:800, :);
         basis = 10*log10(abs(basis(800/2:800, :)));
+        % basis = abs(basis(800/2:800, :));
         imagesc(1:6, F, basis);
         set(gca, 'YDir', 'normal');
-        ylim([0 440]);
+        ylim([0 1500]);
 
         subplot(k, 2, 2 * i);
         amp = normalize(amp, "range");
         plot(F, amp);
-        xlim([0 440]);
+        xlim([0 1500]);
         ylim([0 1]);
         hold on;
         line([120 120], ylim);
@@ -243,7 +362,7 @@ function plot_winner_track ( ...
 
     % Plot the acoustic spectrogram
     subplot(4,1,4);
-    imagesc(train_sample_record(1:FFTL/2,:));
+    imagesc(10 * log10(train_sample_record(1:FFTL/2,:)));
     title('Acoustic Spectrogram');
     xlabel('Frame');
     % xticks([1, 201, 401, 601 801]);
